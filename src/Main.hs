@@ -3,7 +3,6 @@ module Main where
 
 import System.Environment (getArgs)
 import System.Process (system)
-import System.IO (BufferMode(LineBuffering), stdout, hSetBuffering)
 import Control.Monad (void, forever, forM_)
 import Control.Exception (catch, IOException)
 import Control.Concurrent (threadDelay)
@@ -25,10 +24,10 @@ serverQuery :: RF.Address -> IO (Maybe RF.Report)
 serverQuery addr = (resultToMaybe <$> RF.serverQuery addr) `catch`
   (const (pure Nothing) :: IOException -> IO (Maybe RF.Report))
 
-serversBusy :: Int -> [(ServerCfg, Maybe Int)] -> Bool
-serversBusy max = all (isStoppedOrBusy . snd)
-  where isStoppedOrBusy (Just cnt) = cnt >= max
-        isStoppedOrBusy Nothing   = True
+serversFull :: Int -> [(ServerCfg, Maybe Int)] -> Bool
+serversFull max = all (isStoppedOrFull . snd)
+  where isStoppedOrFull (Just cnt) = cnt >= max
+        isStoppedOrFull Nothing   = True
 
 firstDown :: [(ServerCfg, Maybe Int)] -> Maybe ServerCfg
 firstDown = (fst <$>) . find (isNothing . snd)
@@ -44,7 +43,7 @@ needToStop max srvs = map fst $ case nonEmpty of
 decide :: Int
        -> [(ServerCfg, Maybe Int)]
        -> Either [ServerCfg] ServerCfg
-decide max reports = if serversBusy max reports
+decide max reports = if serversFull max reports
                        then case firstDown reports of
                               Just p -> Right p
                               Nothing -> Left []
@@ -56,12 +55,10 @@ addr srv = RF.IP (host srv) (port srv + 1)
 run :: Config -> IO ()
 run cfg = forever $ do
   reports <- RF.mapConcurrently serverQuery (map addr srvs)
-  let reports' = map (RF.playerCnt <$>) reports
-  case decide (maxPlayers . app $ cfg) (zip srvs reports') of
-    Left toStop -> forM_ toStop $ \srv -> do
-      exec (stop srv)
-    Right toStart -> do
-      exec (start toStart)
+  let mcounts = map (RF.playerCnt <$>) reports
+  case decide (maxPlayers . app $ cfg) (zip srvs mcounts) of
+    Left toStop -> mapM_ (exec . stop) toStop
+    Right toStart -> exec (start toStart)
   threadDelay ((delay . app $ cfg) * 1000000)
     where srvs = servers cfg
 

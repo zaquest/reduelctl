@@ -8,6 +8,7 @@ module Config
   ) where
 
 import Data.Semigroup ((<>))
+import Control.Applicative ((<|>))
 import Data.List ((\\), sort)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -31,23 +32,23 @@ data AppCfg = AppCfg
   , maxPlayers :: Int }
   deriving Show
 
+getVal :: Ini -> Text -> Text -> Maybe Text
+getVal ini section key = case lookupValue section key ini of
+                              Right val -> Just val
+                              Left _ -> Nothing
+
 -- | Find `key` in `section` falling back to `common` section.
 lookupServer :: Ini -> Text -> Text -> Either String Text
-lookupServer ini section key =
-  case lookupValue section key ini of
-    val@(Right _) -> val
-    Left _ ->
-      case lookupValue "common" key ini of
-        val@(Right _) -> val
-        Left _ -> Left ("No '" <> T.unpack key <>
-                        "' value is specified for '" <>
-                        T.unpack section <> "'")
+lookupServer ini section key = maybe (Left err) Right mval
+  where mval = getVal ini section key <|> getVal ini "common" key
+        err = "No '" <> T.unpack key <> "' value is specified for '"
+              <> T.unpack section <> "'"
 
 readInt :: String -> Text -> Either String Int
 readInt key str =
   case decimal str of
     Right (val, "") -> Right val
-    _ -> Left ("Invalue '" <> key <> "' value '" <> T.unpack str <>
+    _ -> Left ("Invalid '" <> key <> "' value '" <> T.unpack str <>
                "'")
 
 parseServer :: Ini -> Text -> Either String ServerCfg
@@ -60,11 +61,10 @@ parseServer ini section =
           get key = render <$> lookupServer ini section key
 
 lookupApp :: Ini -> Text -> Either String Text
-lookupApp ini key =
-  case lookupValue "app" key ini of
-    val@(Right _) -> val
-    Left _ -> Left ("No '" <> T.unpack key <> "' is specified in \
-                    \section 'app'")
+lookupApp ini key = maybe (Left err) Right mval
+  where
+    mval = getVal ini "app" key
+    err = "No '" <> T.unpack key <> "' is specified in section 'app'"
 
 parseApp :: Ini -> Either String AppCfg
 parseApp ini = AppCfg <$> get "delay" <*> get "maxplayers"
